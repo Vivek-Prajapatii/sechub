@@ -440,7 +440,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <div id="header">
 <h1><span class="image"><img src="images/sechub-logo.png" alt="sechub"></span> SecHub PDS Documentation</h1>
 <div class="details">
-<span id="revnumber"> PDS 0.23.1</span>
+<span id="revnumber"> PDS 0.24.0</span>
 </div>
 <div id="toc" class="toc2">
 <div id="toctitle">Table of contents</div>
@@ -462,12 +462,17 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <li><a href="#pds-storage-mixing-sharedvolume-and-s3">2.1.4.5. Mixing S3 and shared volume (NFS)</a></li>
 </ul>
 </li>
-<li><a href="#sechub-integration">2.1.5. SecHub integration</a>
+<li><a href="#pds-process-handling">2.1.5. Process execution</a>
 <ul class="sectlevel4">
-<li><a href="#executors-and-adapters">2.1.5.1. Executors and Adapters</a>
+<li><a href="#how-pds-provides-output-and-error-stream-content-of-running-jobs-in-clustered-environments">2.1.5.1. How PDS provides output and error stream content of running jobs in clustered environments</a></li>
+</ul>
+</li>
+<li><a href="#sechub-integration">2.1.6. SecHub integration</a>
+<ul class="sectlevel4">
+<li><a href="#executors-and-adapters">2.1.6.1. Executors and Adapters</a>
 <ul class="sectlevel5">
-<li><a href="#executors">2.1.5.1.1. Executors</a></li>
-<li><a href="#adapters">2.1.5.1.2. Adapters</a></li>
+<li><a href="#executors">2.1.6.1.1. Executors</a></li>
+<li><a href="#adapters">2.1.6.1.2. Adapters</a></li>
 </ul>
 </li>
 </ul>
@@ -532,6 +537,8 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <li><a href="#section-usecase-PDS_UC_008">3.7.9. PDS_UC_008-Anymous check if server is alive</a></li>
 <li><a href="#section-usecase-PDS_UC_009">3.7.10. PDS_UC_009-Admin fetches job result</a></li>
 <li><a href="#section-usecase-PDS_UC_010">3.7.11. PDS_UC_010-Admin fetches server configuration</a></li>
+<li><a href="#section-usecase-PDS_UC_011">3.7.12. PDS_UC_011-Admin fetches job output stream</a></li>
+<li><a href="#section-usecase-PDS_UC_012">3.7.13. PDS_UC_012-Admin fetches job error stream</a></li>
 </ul>
 </li>
 <li><a href="#rest-api">3.8. REST API</a>
@@ -632,7 +639,7 @@ build pipeline / contionus integration (CI) and helps to provide
 </tbody>
 </table>
 <div class="paragraph">
-<p>Documentation version: <code>PDS 0.23.1-pds-20210909084956</code></p>
+<p>Documentation version: <code>PDS 0.24.0-pds-20211028190032</code></p>
 </div>
 <div class="paragraph">
 <p><strong>About PDS (Product Delegation Server)</strong></p>
@@ -1033,11 +1040,78 @@ PDS instances for product <code>XYZ</code> would use a NFS to store job data. Bu
 </div>
 </div>
 <div class="sect3">
-<h4 id="sechub-integration">2.1.5. SecHub integration</h4>
+<h4 id="pds-process-handling">2.1.5. Process execution</h4>
+<div class="paragraph">
+<p>PDS instances are executing so called <code>caller scripts</code> by spanning a new process. At this time
+dedicated environment variables are automatically injected and available inside the scripts.</p>
+</div>
+<div class="admonitionblock tip">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-tip" title="Tip"></i>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>When implementing a new PDS product integration you should always start with a normal,
+executable script (e.g. <code>bash</code>).</p>
+</div>
+<div class="paragraph">
+<p>So you can simply call your script standalone and when it works you just have to create
+the PDS configuration file and make the script callable.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
 <div class="sect4">
-<h5 id="executors-and-adapters">2.1.5.1. Executors and Adapters</h5>
+<h5 id="how-pds-provides-output-and-error-stream-content-of-running-jobs-in-clustered-environments">2.1.5.1. How PDS provides output and error stream content of running jobs in clustered environments</h5>
+<div class="paragraph">
+<p>We use <code>error.txt</code> and <code>output.txt</code> inside the workspace location of
+a running PDS job.</p>
+</div>
+<div class="paragraph">
+<p>The PDS job process does not store the files on a shared volume or S3 bucket
+but on the local file system (like done for uploaded source files for example).</p>
+</div>
+<div class="paragraph">
+<p>So we can easily write those text content from the files to our database when
+the OS process (executing PDS caller script) has finished or failed, because
+at this time we have direct access to the files.</p>
+</div>
+<div class="paragraph">
+<p>But when an administrator wants to get the current output for a running job
+/ operation this becomes tricky in a clustered environment, because the process
+stream data is only available on the machine where the job is executed.
+Using a loadbalancer we do not know which machine will be used for the REST
+operation.</p>
+</div>
+<div class="paragraph">
+<p>So it becomes necessary, that the executing cluster member will store the
+error and output text data in database to provide this cluster wide.</p>
+</div>
+<div class="paragraph">
+<p>On the other hand it shall not slow down or block the execution machine because of
+permanent updates inside the DB. If an admin wants to check the output or
+error stream content of a running job, the information shall be gathered on demand.
+But when the job has finished <em>(no matter if canceled, done or failed)</em> the information will always be written to DB.</p>
+</div>
+<div class="paragraph">
+<p>The next figure gives an overview about the workflow to achieve this goal:</p>
+</div>
+<div class="imageblock">
+<div class="content">
+<img src="images/diagram_pds_overview_stream_access.svg" alt="Overview diagram about stream content fetching in cluster" width="467" height="242">
+</div>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="sechub-integration">2.1.6. SecHub integration</h4>
+<div class="sect4">
+<h5 id="executors-and-adapters">2.1.6.1. Executors and Adapters</h5>
 <div class="sect5">
-<h6 id="executors">2.1.5.1.1. Executors</h6>
+<h6 id="executors">2.1.6.1.1. Executors</h6>
 <div class="paragraph">
 <p>With <code>PDS</code> there is a default <code>REST</code> <code>API</code> available.</p>
 </div>
@@ -1047,7 +1121,7 @@ PDS instances for product <code>XYZ</code> would use a NFS to store job data. Bu
 </div>
 </div>
 <div class="sect5">
-<h6 id="adapters">2.1.5.1.2. Adapters</h6>
+<h6 id="adapters">2.1.6.1.2. Adapters</h6>
 <div class="paragraph">
 <p>The Adapter will always be the same, but filled with other necessary parameters.</p>
 </div>
@@ -1386,8 +1460,45 @@ is e.g. more suitable for a <code>kubernetes</code> cluster deployment.</p>
 </tr>
 </tbody>
 </table>
+<table id="section-gen-config-scope-p" class="tableblock frame-all grid-all stretch">
+<caption class="title">Table 5. Scope 'p'</caption>
+<colgroup>
+<col style="width: 33.3333%;">
+<col style="width: 33.3333%;">
+<col style="width: 33.3334%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Key</th>
+<th class="tableblock halign-left valign-top">Default</th>
+<th class="tableblock halign-left valign-top">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">sechub.pds.config.job.stream.cachetime</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2000</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PDS job stream data caching time in milliseconds. This defines the maximum period of time between an update time stamp and the request timestamp in database where current data is handled as still valid</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">sechub.pds.config.job.stream.check.retries</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">10</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Maximum amount of tries to check if a stream data refresh has been handled (stream data has been updated)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">sechub.pds.config.job.stream.check.timetowait</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">500</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Defines time in milliseconds for PDS job stream data update checks after job has been marked as necessary to have stream data refresh</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">sechub.pds.config.job.stream.mark.retries</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">3</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Maximum amount of retries to mark job stream data refresh</p></td>
+</tr>
+</tbody>
+</table>
 <table id="section-gen-config-scope-scheduler" class="tableblock frame-all grid-all stretch">
-<caption class="title">Table 5. Scope 'scheduler'</caption>
+<caption class="title">Table 6. Scope 'scheduler'</caption>
 <colgroup>
 <col style="width: 33.3333%;">
 <col style="width: 33.3333%;">
@@ -1419,7 +1530,7 @@ is e.g. more suitable for a <code>kubernetes</code> cluster deployment.</p>
 </tbody>
 </table>
 <table id="section-gen-config-scope-security" class="tableblock frame-all grid-all stretch">
-<caption class="title">Table 6. Scope 'security'</caption>
+<caption class="title">Table 7. Scope 'security'</caption>
 <colgroup>
 <col style="width: 33.3333%;">
 <col style="width: 33.3333%;">
@@ -1441,7 +1552,7 @@ is e.g. more suitable for a <code>kubernetes</code> cluster deployment.</p>
 </tbody>
 </table>
 <table id="section-gen-config-scope-startup" class="tableblock frame-all grid-all stretch">
-<caption class="title">Table 7. Scope 'startup'</caption>
+<caption class="title">Table 8. Scope 'startup'</caption>
 <colgroup>
 <col style="width: 33.3333%;">
 <col style="width: 33.3333%;">
@@ -1463,7 +1574,7 @@ is e.g. more suitable for a <code>kubernetes</code> cluster deployment.</p>
 </tbody>
 </table>
 <table id="section-gen-config-scope-storage" class="tableblock frame-all grid-all stretch">
-<caption class="title">Table 8. Scope 'storage'</caption>
+<caption class="title">Table 9. Scope 'storage'</caption>
 <colgroup>
 <col style="width: 33.3333%;">
 <col style="width: 33.3333%;">
@@ -1735,6 +1846,18 @@ of the unzipped files will be available inside <code>$PDS_JOB_WORKSPACE_LOCATION
 <td class="tableblock halign-left valign-top"><p class="tableblock">PDS_JOB_SOURCECODE_UNZIPPED_FOLDER</p></td>
 <td class="tableblock halign-left valign-top"><p class="tableblock">When auto unzipping is enabled (default) the uploaded source code is unzipped to this folder</p></td>
 </tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PDS_SCAN_TARGET_URL</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Target URL for current scan (e.g webscan). Will not be set in all scan types. E.g. for a code scan this environemnt variable will not be available</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">PDS_SCAN_CONFIGURATION</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Contains the SecHub configuration as JSON <em>(but reduced to current scan type, so e.g. a web scan will have no code scan configuration data available)</em><br>
+                                     <br>
+                                      For details about the exact format please look into <a href="https://daimler.github.io/sechub/latest/sechub-client.html">SecHub client documentation</a> . If you are using
+                                      a Java wrapper application inside your PDS scripts, those can use the <code>sechub-commons-model</code> java library which contains <code>SecHubScanConfiguration.java</code>
+                                      <em>(Usage is described in JavaDoc)</em>.</p></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -1878,6 +2001,12 @@ have to use exact same S3 bucket and provide PDS servers with correct S3 credent
 </li>
 <li>
 <p><a href="#section-usecase-PDS_UC_009">PDS_UC_009-Admin fetches job result</a></p>
+</li>
+<li>
+<p><a href="#section-usecase-PDS_UC_011">PDS_UC_011-Admin fetches job output stream</a></p>
+</li>
+<li>
+<p><a href="#section-usecase-PDS_UC_012">PDS_UC_012-Admin fetches job error stream</a></p>
 </li>
 </ul>
 </div>
@@ -2341,6 +2470,120 @@ instead of result - but it&#8217;s no JSON!</p>
 </tbody>
 </table>
 </div>
+<div class="sect3">
+<h4 id="section-usecase-PDS_UC_011">3.7.12. PDS_UC_011-Admin fetches job output stream</h4>
+<div class="paragraph">
+<p>An administrator can fetch the output stream text content via REST. Even when the PDS job is still running this is possible</p>
+</div>
+<div class="paragraph">
+<p><strong>Steps</strong></p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 5%;">
+<col style="width: 20%;">
+<col style="width: 20%;">
+<col style="width: 5%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Nr</th>
+<th class="tableblock halign-left valign-top">Title</th>
+<th class="tableblock halign-left valign-top">Role(s)</th>
+<th class="tableblock halign-left valign-top">Next</th>
+<th class="tableblock halign-left valign-top">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">rest call</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ROLE_SUPERADMIN</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">an admin fetches output stream text.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">service call</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ROLE_SUPERADMIN</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">3</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Output stream content of PDS job shall be returned. If the data is available in database and not outdated it will be returned directly. Otherwise job is marked for refresh and service will wait until stream data has been updated by executing machine. After succesful upate the new result will be returned.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">3</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Request stream data refresh</p></td>
+<td class="tableblock halign-left valign-top"></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">4</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Updates the refresh request timestamp in database. This timestamp will be introspected while PDS job process execution - which will fetch and update stream content</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">4</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Update stream data</p></td>
+<td class="tableblock halign-left valign-top"></td>
+<td class="tableblock halign-left valign-top"></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Reads all stream data (output and error ) from workspace files and stores content inside database. Will also refresh update time stamp for caching mechanism.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="sect3">
+<h4 id="section-usecase-PDS_UC_012">3.7.13. PDS_UC_012-Admin fetches job error stream</h4>
+<div class="paragraph">
+<p>An administrator can fetch the output stream text content via REST. Even when the PDS job is still running this is possible</p>
+</div>
+<div class="paragraph">
+<p><strong>Steps</strong></p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 5%;">
+<col style="width: 20%;">
+<col style="width: 20%;">
+<col style="width: 5%;">
+<col style="width: 50%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">Nr</th>
+<th class="tableblock halign-left valign-top">Title</th>
+<th class="tableblock halign-left valign-top">Role(s)</th>
+<th class="tableblock halign-left valign-top">Next</th>
+<th class="tableblock halign-left valign-top">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">1</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">rest call</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ROLE_SUPERADMIN</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">an admin fetches error stream text.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">2</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">service call</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">ROLE_SUPERADMIN</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">3</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Error stream content of PDS job shall be returned. If the data is available in database and not outdated it will be returned directly. Otherwise job is marked for refresh and service will wait until stream data has been updated by executing machine. After succesful upate the new result will be returned.</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">3</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Request stream data refresh</p></td>
+<td class="tableblock halign-left valign-top"></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">4</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Updates the refresh request timestamp in database. This timestamp will be introspected while PDS job process execution - which will fetch and update stream content</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock">4</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Update stream data</p></td>
+<td class="tableblock halign-left valign-top"></td>
+<td class="tableblock halign-left valign-top"></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">Reads all stream data (output and error ) from workspace files and stores content inside database. Will also refresh update time stamp for caching mechanism.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
 </div>
 <div class="sect2">
 <h3 id="rest-api">3.8. REST API</h3>
@@ -2509,14 +2752,12 @@ This will the process hard!
                 <span class="key"><span class="delimiter">&quot;</span><span class="content">jobsInQueue</span><span class="delimiter">&quot;</span></span>: <span class="integer">1</span>,
                 <span class="key"><span class="delimiter">&quot;</span><span class="content">entries</span><span class="delimiter">&quot;</span></span>: [
                     {
+                        <span class="key"><span class="delimiter">&quot;</span><span class="content">jobUUID</span><span class="delimiter">&quot;</span></span> : <span class="string"><span class="delimiter">&quot;</span><span class="content">c3917a46-456f-4006-888a-08f74cc26a7a</span><span class="delimiter">&quot;</span></span>,
                         <span class="key"><span class="delimiter">&quot;</span><span class="content">done</span><span class="delimiter">&quot;</span></span>: <span class="value">false</span>,
                         <span class="key"><span class="delimiter">&quot;</span><span class="content">canceled</span><span class="delimiter">&quot;</span></span>: <span class="value">false</span>,
-                        <span class="key"><span class="delimiter">&quot;</span><span class="content">job</span><span class="delimiter">&quot;</span></span>: {
-                            <span class="key"><span class="delimiter">&quot;</span><span class="content">owner</span><span class="delimiter">&quot;</span></span>: <span class="string"><span class="delimiter">&quot;</span><span class="content">developer</span><span class="delimiter">&quot;</span></span>,
-                            <span class="key"><span class="delimiter">&quot;</span><span class="content">serverId</span><span class="delimiter">&quot;</span></span>: <span class="string"><span class="delimiter">&quot;</span><span class="content">serverid1</span><span class="delimiter">&quot;</span></span>,
-                            <span class="key"><span class="delimiter">&quot;</span><span class="content">started</span><span class="delimiter">&quot;</span></span>: <span class="string"><span class="delimiter">&quot;</span><span class="content">2020-07-08T17:22:36.295</span><span class="delimiter">&quot;</span></span>,
-                            <span class="key"><span class="delimiter">&quot;</span><span class="content">state</span><span class="delimiter">&quot;</span></span>: <span class="string"><span class="delimiter">&quot;</span><span class="content">RUNNING</span><span class="delimiter">&quot;</span></span>
-                        }
+                        <span class="key"><span class="delimiter">&quot;</span><span class="content">created</span><span class="delimiter">&quot;</span></span>: <span class="string"><span class="delimiter">&quot;</span><span class="content">2020-07-08T17:22:33.132</span><span class="delimiter">&quot;</span></span>,
+                        <span class="key"><span class="delimiter">&quot;</span><span class="content">started</span><span class="delimiter">&quot;</span></span>: <span class="string"><span class="delimiter">&quot;</span><span class="content">2020-07-08T17:22:36.295</span><span class="delimiter">&quot;</span></span>,
+                        <span class="key"><span class="delimiter">&quot;</span><span class="content">state</span><span class="delimiter">&quot;</span></span>: <span class="string"><span class="delimiter">&quot;</span><span class="content">RUNNING</span><span class="delimiter">&quot;</span></span>
                     }
                 ]
             }
@@ -2532,7 +2773,7 @@ This will the process hard!
 </div>
 <div id="footer">
 <div id="footer-text">
- PDS 0.23.1<br>
+ PDS 0.24.0<br>
 </div>
 </div>
 <style>
